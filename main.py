@@ -3,6 +3,7 @@ Main entry point for the modular EA assignment project.
 """
 
 import os
+import csv
 import matplotlib.pyplot as plt
 
 from problems import PROBLEMS
@@ -29,6 +30,104 @@ RUNS = 10
 MUTATION_STEP = 0.25
 MUTATION_RATE_PER_GENE = 0.20
 PLOTS_OUTPUT_DIR = "plots"
+RESULTS_OUTPUT_DIR = "results"
+
+
+def safe_output_stem(problem_name, combo_name):
+    """Build a filesystem-friendly base name for one experiment combination."""
+    text = f"{problem_name}_{combo_name}"
+    text = text.replace(" + ", "_")
+    text = text.replace(" ", "_")
+
+    cleaned = ""
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+    for ch in text:
+        if ch in allowed:
+            cleaned += ch
+
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+
+    cleaned = cleaned.strip("_")
+    if cleaned == "":
+        cleaned = "output"
+    return cleaned
+
+
+def export_combination_results_csv(
+    problem_name,
+    combo_name,
+    all_bsf_runs,
+    avg_bsf_curve,
+    all_acp_runs,
+    avg_acp_curve,
+):
+    """
+    Export one CSV table for a function/selection combination.
+
+    Header format:
+    Generation, Run 1 BSF, ..., Run 10 BSF, Average BSF,
+    Run 1 ACP, ..., Run 10 ACP, Average ACP
+    """
+    csv_filename = f"{safe_output_stem(problem_name, combo_name)}_data.csv"
+    csv_path = os.path.join(RESULTS_OUTPUT_DIR, csv_filename)
+
+    header = ["Generation"]
+
+    for run_index in range(1, RUNS + 1):
+        header.append(f"Run {run_index} BSF")
+    header.append("Average BSF")
+
+    for run_index in range(1, RUNS + 1):
+        header.append(f"Run {run_index} ACP")
+    header.append("Average ACP")
+
+    def format_value(value):
+        # Fixed decimals make the table easier to read and compare.
+        return f"{value:.6f}"
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(header)
+
+        for generation_index in range(GENERATIONS):
+            row = [generation_index + 1]
+
+            for run_index in range(RUNS):
+                row.append(format_value(all_bsf_runs[run_index][generation_index]))
+            row.append(format_value(avg_bsf_curve[generation_index]))
+
+            for run_index in range(RUNS):
+                row.append(format_value(all_acp_runs[run_index][generation_index]))
+            row.append(format_value(avg_acp_curve[generation_index]))
+
+            writer.writerow(row)
+
+    print(f"Saved CSV: {csv_path}")
+
+
+def plot_individual_metric(
+    problem_name,
+    combo_name,
+    generation_numbers,
+    metric_curve,
+    metric_name,
+    y_label,
+):
+    """Save one single-combination metric line plot with explicit filename."""
+    plt.figure(figsize=(10, 6))
+    plt.plot(generation_numbers, metric_curve, label=combo_name)
+    plt.title(f"{problem_name} - {combo_name} - Average {metric_name} Over Generations")
+    plt.xlabel("Generation")
+    plt.ylabel(y_label)
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+
+    filename = f"{safe_output_stem(problem_name, combo_name)}_{metric_name}.png"
+    output_path = os.path.join(PLOTS_OUTPUT_DIR, filename)
+    plt.savefig(output_path, dpi=150)
+    print(f"Saved plot: {output_path}")
 
 
 # ------------------------------------------------------------
@@ -121,6 +220,8 @@ def average_curves_over_runs(all_runs_curves):
 
 
 def run_experiment_for_combination(
+    problem_name,
+    combo_name,
     fitness_function,
     x_bounds,
     y_bounds,
@@ -135,6 +236,8 @@ def run_experiment_for_combination(
     - avg_bsf_curve (length GENERATIONS)
     - avg_acp_curve (length GENERATIONS)
     - avg_wcp_curve (length GENERATIONS)
+    - all_bsf_runs (RUNS x GENERATIONS)
+    - all_acp_runs (RUNS x GENERATIONS)
     - final_gen_bsf_values (length RUNS)
     - final_gen_acp_values (length RUNS)
     - final_gen_wcp_values (length RUNS)
@@ -166,10 +269,21 @@ def run_experiment_for_combination(
     avg_acp_curve = average_curves_over_runs(all_acp_runs)
     avg_wcp_curve = average_curves_over_runs(all_wcp_runs)
 
+    export_combination_results_csv(
+        problem_name,
+        combo_name,
+        all_bsf_runs,
+        avg_bsf_curve,
+        all_acp_runs,
+        avg_acp_curve,
+    )
+
     return (
         avg_bsf_curve,
         avg_acp_curve,
         avg_wcp_curve,
+        all_bsf_runs,
+        all_acp_runs,
         final_gen_bsf_values,
         final_gen_acp_values,
         final_gen_wcp_values,
@@ -204,6 +318,9 @@ def run_all_experiments_for_problem(problem_name, problem_data):
     final_bsf_by_combination = {}
     final_acp_by_combination = {}
     final_wcp_by_combination = {}
+    generations = []
+    for i in range(1, GENERATIONS + 1):
+        generations.append(i)
 
     for parent_method, survival_method in combinations:
         combo_name = f"{parent_method} + {survival_method}"
@@ -213,10 +330,14 @@ def run_all_experiments_for_problem(problem_name, problem_data):
             avg_bsf,
             avg_acp,
             avg_wcp,
+            all_bsf_runs,
+            all_acp_runs,
             final_bsf_values,
             final_acp_values,
             final_wcp_values,
         ) = run_experiment_for_combination(
+            problem_name,
+            combo_name,
             fitness_function,
             x_bounds,
             y_bounds,
@@ -231,9 +352,23 @@ def run_all_experiments_for_problem(problem_name, problem_data):
         final_acp_by_combination[combo_name] = final_acp_values
         final_wcp_by_combination[combo_name] = final_wcp_values
 
-    generations = []
-    for i in range(1, GENERATIONS + 1):
-        generations.append(i)
+        plot_individual_metric(
+            problem_name,
+            combo_name,
+            generations,
+            avg_bsf,
+            "BSF",
+            "Average Best-So-Far Fitness",
+        )
+
+        plot_individual_metric(
+            problem_name,
+            combo_name,
+            generations,
+            avg_acp,
+            "ACP",
+            "Average Population Fitness",
+        )
 
     plot_metric(
         generations,
@@ -290,6 +425,7 @@ def main():
     # random.seed(42)
 
     os.makedirs(PLOTS_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(RESULTS_OUTPUT_DIR, exist_ok=True)
 
     for problem_name in PROBLEMS:
         run_all_experiments_for_problem(problem_name, PROBLEMS[problem_name])
